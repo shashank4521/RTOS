@@ -1,0 +1,79 @@
+While a Mutex is like a single key to a single-occupancy restroom, a Semaphore is more like a bowl of physical passes for a shared study room that can hold a specific number of people (say, 3 people).
+
+If a pass is available, you take one and go in. If the bowl is empty, you have to wait outside until someone leaves and puts their pass back in the bowl.
+
+In an RTOS, semaphores are primarily used for two things:
+
+Managing a finite pool of identical resources (Counting Semaphore).
+
+Signaling between tasks to synchronize events (Binary Semaphore).
+
+Type,Initial Count,Common Purpose
+Binary Semaphore,Max range is 0 to 1,"Signaling: One task (or an Interrupt) tells another task, ""Hey, an event happened, wake up and process it!"""
+Counting Semaphore,Max range is 0 to N,"Resource Management: Tracking a limited number of items, like keeping track of how many unread data packets are waiting in a buffer."
+
+How this execution flows:
+When the system starts, vProcessingTask hits xSemaphoreTake. Because the binary semaphore starts at 0, this high-priority task immediately blocks and goes to sleep. It uses 0% CPU cycles right now.
+
+vTriggerTask runs, waits for 2 seconds, and prints its message.
+
+vTriggerTask calls xSemaphoreGive(), incrementing the semaphore count to 1.
+
+The RTOS instantly notices that the high-priority vProcessingTask was waiting for this exact key. It pauses the trigger task and wakes up the processing task to complete its job.
+
+Once done, vProcessingTask loops back, tries to Take the semaphore again (which is now back to 0), and goes right back to sleep until the next 2-second trigger.
+
+The Crucial Difference: Mutex vs. Semaphore
+It is easy to mistake a Binary Semaphore for a Mutex because both have a maximum count of 1. However, their underlying behavior and intent are fundamentally different:
+
+Ownership: A Mutex has ownership. Whichever task takes a Mutex must be the one to give it back. A Semaphore has no owner—Task A can "Take" it, and Task B (or an Interrupt) can "Give" it to unlock Task A.
+
+Priority Inversion Protection: Mutexes have a mechanism called Priority Inheritance (if a low-priority task holds the lock, its priority is temporarily boosted if a high-priority task needs it). Semaphores do not have priority inheritance, which makes semaphores dangerous to use for strict resource locking, but perfect for structural signaling.
+
+#include <Arduino.h>
+
+// Handle for our Binary Semaphore
+SemaphoreHandle_t xBinarySemaphore;
+
+// Task that handles heavy processing
+void vProcessingTask(void *pvParameters) {
+  while(1) {
+    // Wait indefinitely until the semaphore is "given" by the trigger task
+    if (xSemaphoreTake(xBinarySemaphore, portMAX_DELAY) == pdTRUE) {
+      
+      // This code runs ONLY when signaled
+      Serial.println("Processing Task: Signal received! Performing heavy math...");
+      vTaskDelay(pdMS_TO_TICKS(100)); // Simulate heavy work
+      Serial.println("Processing Task: Work done. Going back to sleep.");
+      
+    }
+  }
+}
+
+// Task that simulates an external trigger (like a sensor threshold or button press)
+void vTriggerTask(void *pvParameters) {
+  while(1) {
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Wait 2 seconds
+    
+    Serial.println("\nTrigger Task: An event occurred! Signaling Processing Task...");
+    
+    // "Give" the semaphore to wake up the processing task
+    xSemaphoreGive(xBinarySemaphore);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Create a binary semaphore (starts in an empty/0 state)
+  xBinarySemaphore = xSemaphoreCreateBinary();
+  
+  if (xBinarySemaphore != NULL) {
+    // We give the processing task a higher priority so it responds instantly when signaled
+    xTaskCreate(vProcessingTask, "Processor", 2048, NULL, 2, NULL);
+    xTaskCreate(vTriggerTask, "Trigger", 2048, NULL, 1, NULL);
+  }
+}
+
+void loop() {}
+
